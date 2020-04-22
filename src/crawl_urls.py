@@ -11,7 +11,10 @@ from requests import HTTPError
 
 base_url = "https://pypi.org/pypi"
 session = requests.Session()
-headers = {'User-Agent': 'Pypi Daily Sync (Contact: hsngrmpf+pypiurlcrawler@gmail.com)'}
+email = os.environ.get("EMAIL")
+if not email:
+    raise Exception("Please provide EMAIL=")
+headers = {'User-Agent': f'Pypi Daily Sync (Contact: {email})'}
 
 
 def all_packages():

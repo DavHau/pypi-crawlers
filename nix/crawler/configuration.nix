@@ -77,20 +77,23 @@ in
     environment = {
       WORKERS = "5";
       PYTHONPATH = src;
+      EMAIL = "hsngrmpf+pypiurlcrawler@gmail.com";
     };
     path = [ python pkgs.git ];
     script = ''
+      set -x
       if [ ! -e /home/${user}/nix-pypi-fetcher ]; then
         git clone git@github.com:DavHau/nix-pypi-fetcher.git /home/${user}/nix-pypi-fetcher
-        git config --global user.email "hsngrmpf+pypiurlcrawler@gmail.com"
-        git config --global user.name "DavHau"
+        git config user.email "$EMAIL"
+        git config user.name "DavHau"
       fi
       cd /home/${user}/nix-pypi-fetcher
       git checkout master
       git pull
-      rm ./pypi/*
+      rm -f ./pypi/*
       ${python}/bin/python -u ${src}/crawl_urls.py ./pypi
-      git add ./pypi
+      echo $(date +%s) > UNIX_TIMESTAMP
+      git add ./pypi UNIX_TIMESTAMP
       git pull
       git commit -m "$(date)"
       git push
@@ -134,26 +137,32 @@ in
     serviceConfig = { Type = "simple"; };
     serviceConfig = { User = "${user}"; };
     environment = {
-      WORKERS = "5";
       PYTHONPATH = src;
       DB_HOST = db_host;
+      EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
     };
-    path = [ python pkgs.git pkgs.openssh ];
+    path = [ python ] ++ (with pkgs; [ git nix gawk gnutar gzip ]);
     script = ''
-      set -x
       export DB_PASS=$(cat /home/${user}/db_pass)
+      set -x
       export GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh -i /home/${user}/.ssh/id_ed25519_deps_db"
       if [ ! -e /home/${user}/pypi-deps-db ]; then
         git clone git@github.com:DavHau/pypi-deps-db.git /home/${user}/pypi-deps-db
-        git config --global user.email "hsngrmpf+pypidepscrawler@gmail.com"
-        git config --global user.name "DavHau"
+        git config user.email "$EMAIL"
+        git config user.name "DavHau"
       fi
       cd /home/${user}/pypi-deps-db
       git checkout master
       git pull
-      rm ./data/*
+      rm -f ./data/*
       ${python}/bin/python -u ${src}/dump_deps.py ./data
-      git add ./data
+      echo $(date +%s) > UNIX_TIMESTAMP
+      pypi_fetcher_commit=$(git ls-remote https://github.com/DavHau/nix-pypi-fetcher master | awk '{print $1;}')
+      pypi_fetcher_url="https://github.com/DavHau/nix-pypi-fetcher/archive/''${pypi_fetcher_commit}.tar.gz"
+      pypi_fetcher_hash=$(nix-prefetch-url --unpack $pypi_fetcher_url)
+      echo $pypi_fetcher_commit > PYPI_FETCHER_COMMIT
+      echo $pypi_fetcher_hash > PYPI_FETCHER_TARBALL_SHA256
+      git add ./data UNIX_TIMESTAMP PYPI_FETCHER_COMMIT PYPI_FETCHER_TARBALL_SHA256
       git pull
       git commit -m "$(date)"
       git push

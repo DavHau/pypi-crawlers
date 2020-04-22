@@ -1,7 +1,7 @@
 import json
 import os
 from _sha256 import sha256
-from collections import UserDict
+from collections import UserDict, OrderedDict
 
 
 class LazyBucketDict(UserDict):
@@ -62,8 +62,9 @@ class LazyBucketDict(UserDict):
 
     def save_bucket(self, bucket, directory_path):
         self.ensure_bucket_loaded(bucket)
+        save = OrderedDict(sorted(self.data[bucket].items(), key=lambda item: item[0]))
         with open(f"{directory_path}/{bucket}.json", 'w') as f:
-            json.dump(self.data[bucket], f, indent=2)
+            json.dump(save, f, indent=2)
 
     def save(self):
         if not os.path.isdir(self.directory):

@@ -200,7 +200,7 @@ def main():
     pypi_fetcher_dir = os.environ.get('pypi_fetcher', '/tmp/pypi_fetcher')
     ensure_pypi_fetcher(pypi_fetcher_dir)
     init_db()
-    build_base(store=os.environ.get('almighty_store', None))
+    build_base(store=os.environ.get('STORE', None))
     P = Package
     with Measure('Get processed pkgs from DB'):
         processed = set((p.name, p.version) for p in P.select(P.name, P.version).distinct())

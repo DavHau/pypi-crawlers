@@ -1,4 +1,4 @@
-with import <nixpkgs> {};
+with import (import ./nixpkgs-src.nix).stable { config = {}; };
 let
   python = python37;
   bounded-pool-executor = python.pkgs.buildPythonPackage {
