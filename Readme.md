@@ -44,3 +44,6 @@ A python based service regularly checks for new packages which werer detected by
     |- dump_deps.py         Entry point for dumping the dependencies from the DB into json.
 
 ```
+
+### Debugging
+see [./debug](./debug)
