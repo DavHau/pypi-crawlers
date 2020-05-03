@@ -21,6 +21,7 @@ in
 python37.withPackages (ps: [
   ps.requests
   ps.psycopg2
+  ps.pkginfo
   peewee
   bounded-pool-executor
 ])

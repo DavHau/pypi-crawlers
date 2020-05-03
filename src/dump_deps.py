@@ -1,4 +1,3 @@
-import os
 import sys
 from dataclasses import asdict, dataclass
 from typing import Set, Dict
@@ -41,6 +40,7 @@ flatten_keys = (
     'tests_require',
     'python_requires',
 )
+
 
 def pkg_to_dict(pkg):
     pkg_dict = asdict(PKG(
@@ -98,6 +98,19 @@ def get_names_per_bucket() -> Dict[str, Set[str]]:
     return result
 
 
+def compress_dict(pkgs_dict: LazyBucketDict):
+    for name in pkgs_dict.keys():
+        compressed_versions = {}
+        for ver, value in pkgs_dict[name].items():
+            for stored_key, stored_val in compressed_versions.items():
+                if stored_val == value:
+                    compressed_versions[ver] = stored_key
+                    break
+            if ver not in compressed_versions:
+                compressed_versions[ver] = value
+        pkgs_dict[name] = compressed_versions
+
+
 def main():
     dump_dir = sys.argv[1]
     for bucket_key, key_set in get_names_per_bucket().items():
@@ -114,9 +127,10 @@ def main():
             P.python_requires,
         ).where(P.error.is_null(), P.name.in_(key_set))
         print(f'dumping bucket {bucket_key}')
-        for pkg in sorted(pkgs, key=lambda pkg: (pkg.name, pkg.py_ver)):
+        for pkg in sorted(pkgs, key=lambda pkg: (pkg.name, pkg.version, pkg.py_ver)):
             py_ver = ''.join(filter(lambda c: c.isdigit(), pkg.py_ver))
             insert(py_ver, pkg.name, pkg.version, pkg_to_dict(pkg), pkgs_dict)
+        compress_dict(pkgs_dict)
         pkgs_dict.save()
 
 

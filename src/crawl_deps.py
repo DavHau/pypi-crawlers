@@ -140,16 +140,17 @@ def get_jobs(pypi_fetcher_dir, bucket, processed, amount=1000):
     names = list(pypi_dict.by_bucket(bucket).keys())
     shuffle(names)
     for pkg_name in names:
-        for ver, release in pypi_dict[pkg_name].items():
+        for ver, release_types in pypi_dict[pkg_name].items():
             if (pkg_name, ver) in processed:
                 continue
             total_count += 1
+            release = release_types['sdist']
             if len(jobs) <= amount:
                 jobs.append(PackageJob(
                     pkg_name,
                     ver,
-                    "https://files.pythonhosted.org/packages/" + release['url'],
-                    release['sha256'],
+                    f"https://files.pythonhosted.org/packages/source/{pkg_name[0]}/{pkg_name}/{release[1]}",
+                    release[0],
                     total_count,
                 ))
     print(f"Bucket {bucket}: Planning execution of {len(jobs)} jobs out of {total_count} total jobs for this bucket")
@@ -208,7 +209,6 @@ def main():
     for bucket in LazyBucketDict.bucket_keys():
         with Measure("getting jobs"):
             jobs = get_jobs(pypi_fetcher_dir, bucket, processed, amount=1000)
-            # jobs = [PackageJob(name='requests', version='2.22.0', url=None, sha256=None, internal_serial_pkg=0, internal_serial_release=0)]
             if not jobs:
                 continue
         with Measure('batch'):
@@ -232,6 +232,7 @@ def main():
                 Package.bulk_create([Package(**r) for r in results])
         if os.environ.get('CLEANUP', None):
             cleanup()
+
 
 if __name__ == "__main__":
     main()

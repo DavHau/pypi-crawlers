@@ -56,8 +56,8 @@ def save_pkg_meta(name, pkgs_dict):
                 return
         except:
             traceback.print_exc()
-            print("Warning! problems accessing pypi api. Will retry in 5s")
-            sleep(5)
+            print("Warning! problems accessing pypi api. Will retry in 10s")
+            sleep(10)
     releases_dict = {}
     # iterate over versions of current package
     for release_ver, release in meta['releases'].items():
@@ -74,7 +74,7 @@ def save_pkg_meta(name, pkgs_dict):
             ]
         if wheels:
             releases_dict[release_ver]['wheels'] = {
-                wheel['filename']: wheel['digests']['sha256']
+                wheel['filename']: (wheel['digests']['sha256'], wheel['python_version'])
                 for wheel in wheels
             }
     if releases_dict:
