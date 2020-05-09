@@ -148,6 +148,7 @@ in
       export GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh -i /home/${user}/.ssh/id_ed25519_deps_db"
       if [ ! -e /home/${user}/pypi-deps-db ]; then
         git clone git@github.com:DavHau/pypi-deps-db.git /home/${user}/pypi-deps-db
+        cd /home/${user}/pypi-deps-db
         git config user.email "$EMAIL"
         git config user.name "DavHau"
       fi
