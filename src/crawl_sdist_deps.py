@@ -134,13 +134,15 @@ def extract_requirements(job: PackageJob):
 
 
 def get_jobs(pypi_fetcher_dir, bucket, processed, amount=1000):
-    pypi_dict = LazyBucketDict(f"{pypi_fetcher_dir}/pypi")
+    pypi_dict = LazyBucketDict(f"{pypi_fetcher_dir}/pypi", restrict_to_bucket=bucket)
     total_count = 0
     jobs = []
     names = list(pypi_dict.by_bucket(bucket).keys())
     shuffle(names)
     for pkg_name in names:
         for ver, release_types in pypi_dict[pkg_name].items():
+            if 'sdist' not in release_types:
+                continue
             if (pkg_name, ver) in processed:
                 continue
             total_count += 1

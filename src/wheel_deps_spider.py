@@ -1,3 +1,4 @@
+import json
 import os
 from abc import ABC
 from dataclasses import dataclass
@@ -49,10 +50,42 @@ def construct_url(name, pyver, filename: str):
     return f"{base_url}{pyver}/{name[0]}/{name}/{filename}"
 
 
-def compress(dump_dict):
-    for name, pyvers in dump_dict.items():
-        all_fnames = {}
+def sort(d: dict):
+    res = {}
+    for k, v in sorted(d.items()):
+        if isinstance(v, dict):
+            res[k] = sort(v)
+        else:
+            res[k] = v
+    return res
+
+
+def decompress(d):
+    with open('/tmp/decomp', 'w') as f:
+        json.dump(d.data, f, indent=2)
+    for name, pyvers in d.items():
         for pyver, pkg_vers in pyvers.items():
+            for pkg_ver, fnames in pkg_vers.items():
+                for fn, data in fnames.items():
+                    if isinstance(data, str):
+                        key_ver, key_fn = data.split('@')
+                        try:
+                            pkg_vers[key_ver][key_fn]
+                        except KeyError:
+                            print(f"Error with key_ver: {key_ver} , key_fn: {key_fn}")
+                            exit()
+                        fnames[fn] = pkg_vers[key_ver][key_fn]
+
+
+def compress(dump_dict):
+    decompress(dump_dict)
+    # sort
+    for k, v in dump_dict.items():
+        dump_dict[k] = sort(v)
+    for name, pyvers in dump_dict.items():
+        for pyver, pkg_vers in pyvers.items():
+
+            all_fnames = {}
             for pkg_ver, fnames in pkg_vers.items():
                 for fn, data in fnames.items():
                     for existing_key, d in all_fnames.items():
@@ -116,48 +149,55 @@ class WheelSpider(scrapy.Spider, ABC):
         names = list(pypi_dict.by_bucket(self.bucket).keys())
         jobs = []
         for pkg_name in names:
+            if pkg_name in self.dump_dict and len(list(self.dump_dict[pkg_name].keys())) < 2:
+                continue
             for ver, release_types in pypi_dict[pkg_name].items():
                 if 'wheels' not in release_types:
                     continue
                 for filename, data in release_types['wheels'].items():
                     pyver = data[1]
-                    try:
-                        self.dump_dict[pkg_name][pyver][ver][filename]
-                    except KeyError:
-                        pass
-                    else:
-                        continue
                     url = construct_url(pkg_name, pyver, filename)
                     jobs.append(Request(url, callback=parse_response, cb_kwargs=dict(job=Job(
                         name=pkg_name, ver=ver, filename=filename, pyver=pyver, dump_dict=self.dump_dict))))
+        print(f"jobs: {len(jobs)}")
         shuffle(jobs)
         return jobs
 
 
 def main():
+    skip = os.environ.get('skip')
     dump_dir = os.environ.get('dump_dir', "./wheels")
     runner = CrawlerRunner()
 
     def spiders():
         for nr, _bucket in enumerate(LazyBucketDict.bucket_keys()):
-            _dump_dict = LazyBucketDict(dump_dir)
+            _dump_dict = LazyBucketDict(dump_dir, restrict_to_bucket=_bucket)
 
             class BucketSpider(WheelSpider):
                 bucket = _bucket
                 dump_dict = _dump_dict
+            if skip and int(_bucket, 16) < int(skip, 16):
+                continue
             yield BucketSpider, _dump_dict
 
     @defer.inlineCallbacks
     def crawl():
         for s, dump_dict in spiders():
             yield runner.crawl(s)
-            compress(dump_dict)
-            dump_dict.save()
+            try:
+                compress(dump_dict)
+                dump_dict.save()
+            except:
+                import traceback
+                traceback.print_exc()
+                exit()
         reactor.stop()
 
     crawl()
     reactor.run()
 
+
+#TODO: normalize versions
 
 if __name__ == "__main__":
     main()

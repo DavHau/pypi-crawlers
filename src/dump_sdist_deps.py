@@ -98,23 +98,32 @@ def get_names_per_bucket() -> Dict[str, Set[str]]:
     return result
 
 
-def compress_dict(pkgs_dict: LazyBucketDict):
-    for name in pkgs_dict.keys():
-        compressed_versions = {}
-        for ver, value in pkgs_dict[name].items():
-            for stored_key, stored_val in compressed_versions.items():
-                if stored_val == value:
-                    compressed_versions[ver] = stored_key
-                    break
-            if ver not in compressed_versions:
-                compressed_versions[ver] = value
-        pkgs_dict[name] = compressed_versions
+def compress_dict(d, sort=True):
+    if sort:
+        items = sorted(d.items(), key=lambda x: x[0])
+    else:
+        items = d.items()
+    keep = {}
+    for k, v in items:
+        for keep_key, keep_val in keep.items():
+            if v == keep_val:
+                d[k] = keep_key
+                break
+        if not isinstance(d[k], str):
+            keep[k] = v
+
+
+def compress(pkgs_dict: LazyBucketDict):
+    for name, vers in pkgs_dict.items():
+        for ver, pyvers in vers.items():
+            compress_dict(pyvers)
+        compress_dict(vers)
 
 
 def main():
     dump_dir = sys.argv[1]
     for bucket_key, key_set in get_names_per_bucket().items():
-        pkgs_dict = LazyBucketDict(f"{dump_dir}")
+        pkgs_dict = LazyBucketDict(f"{dump_dir}", restrict_to_bucket=bucket_key)
         pkgs = P.select(
             P.id,
             P.name,
@@ -130,7 +139,7 @@ def main():
         for pkg in sorted(pkgs, key=lambda pkg: (pkg.name, pkg.version, pkg.py_ver)):
             py_ver = ''.join(filter(lambda c: c.isdigit(), pkg.py_ver))
             insert(py_ver, pkg.name, pkg.version, pkg_to_dict(pkg), pkgs_dict)
-        compress_dict(pkgs_dict)
+        compress(pkgs_dict)
         pkgs_dict.save()
 
 

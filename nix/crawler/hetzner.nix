@@ -17,6 +17,6 @@
       users.users.root.openssh.authorizedKeys.keys = [
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDuhpzDHBPvn8nv8RH1MRomDOaXyP4GziQm7r3MZ1Syk"
       ];
-      deployment.targetHost = "95.217.210.249";
+      deployment.targetHost = "95.217.166.31";
     };
 }

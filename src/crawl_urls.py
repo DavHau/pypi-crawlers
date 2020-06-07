@@ -34,15 +34,15 @@ def select_favorite_sdist_release(sdist_releases):
     (tar.gz, tgz, zip, tar.bz2) (left == better).
     If multiple filenames with same suffix exist, the shortest filename is picked
     """
+    sdist_releases = list(sdist_releases)
     f_types = ('tar.gz', '.tgz', '.zip', '.tar.bz2')
-    releases_sorted_by_priority = map(
-        lambda t:
-            min(filter(lambda r: r['filename'].endswith(t),
-                       sdist_releases),
-                key=lambda r: len(r['filename']),
-                default=None),
-        f_types)
-    return next((r for r in releases_sorted_by_priority if r is not None), None)
+    compatible_releases = filter(lambda r: any(r['filename'].endswith(end) for end in f_types),
+                                 sdist_releases)
+    sorted_releases = sorted(compatible_releases,
+                             key=lambda r: next(i for i, t in enumerate(f_types) if r['filename'].endswith(t)))
+    if not sorted_releases:
+        return []
+    return sorted_releases[0]
 
 
 def save_pkg_meta(name, pkgs_dict):
