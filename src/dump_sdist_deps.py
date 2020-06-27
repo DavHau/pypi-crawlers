@@ -1,4 +1,3 @@
-import os
 import sys
 from dataclasses import asdict, dataclass
 from typing import Set, Dict
@@ -41,6 +40,7 @@ flatten_keys = (
     'tests_require',
     'python_requires',
 )
+
 
 def pkg_to_dict(pkg):
     pkg_dict = asdict(PKG(
@@ -98,10 +98,32 @@ def get_names_per_bucket() -> Dict[str, Set[str]]:
     return result
 
 
+def compress_dict(d, sort=True):
+    if sort:
+        items = sorted(d.items(), key=lambda x: x[0])
+    else:
+        items = d.items()
+    keep = {}
+    for k, v in items:
+        for keep_key, keep_val in keep.items():
+            if v == keep_val:
+                d[k] = keep_key
+                break
+        if not isinstance(d[k], str):
+            keep[k] = v
+
+
+def compress(pkgs_dict: LazyBucketDict):
+    for name, vers in pkgs_dict.items():
+        for ver, pyvers in vers.items():
+            compress_dict(pyvers)
+        compress_dict(vers)
+
+
 def main():
     dump_dir = sys.argv[1]
     for bucket_key, key_set in get_names_per_bucket().items():
-        pkgs_dict = LazyBucketDict(f"{dump_dir}")
+        pkgs_dict = LazyBucketDict(f"{dump_dir}", restrict_to_bucket=bucket_key)
         pkgs = P.select(
             P.id,
             P.name,
@@ -114,9 +136,10 @@ def main():
             P.python_requires,
         ).where(P.error.is_null(), P.name.in_(key_set))
         print(f'dumping bucket {bucket_key}')
-        for pkg in sorted(pkgs, key=lambda pkg: (pkg.name, pkg.py_ver)):
+        for pkg in sorted(pkgs, key=lambda pkg: (pkg.name, pkg.version, pkg.py_ver)):
             py_ver = ''.join(filter(lambda c: c.isdigit(), pkg.py_ver))
             insert(py_ver, pkg.name, pkg.version, pkg_to_dict(pkg), pkgs_dict)
+        compress(pkgs_dict)
         pkgs_dict.save()
 
 

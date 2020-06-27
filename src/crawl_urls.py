@@ -28,17 +28,21 @@ def pkg_meta(name):
     return resp.json()
 
 
-def find_favorite_format(sdist_releases, f_types):
-    ok_releases = []
-    for sdist_rel in sdist_releases:
-        for t in f_types:
-            if sdist_rel['filename'].endswith(t):
-                ok_releases.append(sdist_rel)
-    for t in f_types:
-        releases_with_type = [rel for rel in sdist_releases if rel['filename'].endswith(t)]
-        if releases_with_type:
-            return min(releases_with_type, key=lambda release: len(release['filename']))
-    return None
+def select_favorite_sdist_release(sdist_releases):
+    """
+    Selects one sdist from a list while prioritizing the file suffixes
+    (tar.gz, tgz, zip, tar.bz2) (left == better).
+    If multiple filenames with same suffix exist, the shortest filename is picked
+    """
+    sdist_releases = list(sdist_releases)
+    f_types = ('tar.gz', '.tgz', '.zip', '.tar.bz2')
+    compatible_releases = filter(lambda r: any(r['filename'].endswith(end) for end in f_types),
+                                 sdist_releases)
+    sorted_releases = sorted(compatible_releases,
+                             key=lambda r: next(i for i, t in enumerate(f_types) if r['filename'].endswith(t)))
+    if not sorted_releases:
+        return []
+    return sorted_releases[0]
 
 
 def save_pkg_meta(name, pkgs_dict):
@@ -52,20 +56,27 @@ def save_pkg_meta(name, pkgs_dict):
                 return
         except:
             traceback.print_exc()
-            print("Warning! problems accessing pypi api. Will retry in 5s")
-            sleep(5)
+            print("Warning! problems accessing pypi api. Will retry in 10s")
+            sleep(10)
     releases_dict = {}
     # iterate over versions of current package
     for release_ver, release in meta['releases'].items():
-        f_types = ('tar.gz', '.tgz', '.zip', '.tar.bz2')
-        sdist_releases = [f for f in release if f['packagetype'] == "sdist"]
-        if sdist_releases:
-            src_release = find_favorite_format(sdist_releases, f_types)
-            if src_release:
-                releases_dict[release_ver] = dict(
-                    sha256=src_release['digests']['sha256'],
-                    url=src_release['url'].replace('https://files.pythonhosted.org/packages/', '')
-                )
+        sdists = filter(lambda file: file['packagetype'] in ["sdist"], release)
+        sdist = select_favorite_sdist_release(sdists)
+        wheels = list(filter(lambda file: file['packagetype'] in ["bdist_wheel"], release))
+        if not (sdist or wheels):
+            continue
+        releases_dict[release_ver] = {}
+        if sdist:
+            releases_dict[release_ver]['sdist'] = [
+                sdist['digests']['sha256'],
+                sdist['filename'],
+            ]
+        if wheels:
+            releases_dict[release_ver]['wheels'] = {
+                wheel['filename']: (wheel['digests']['sha256'], wheel['python_version'])
+                for wheel in wheels
+            }
     if releases_dict:
         pkgs_dict[name.replace('_', '-').lower()] = releases_dict
 
