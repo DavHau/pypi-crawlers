@@ -1,5 +1,7 @@
+import json
 import os
 import sys
+import traceback
 import zipfile
 from dataclasses import dataclass
 from random import shuffle
@@ -69,8 +71,8 @@ class HttpWheel(pkginfo.Wheel):
 
 
 def mine_wheel_metadata_full_download(job: Job) -> Union[Result, Exception]:
-    if not job.nr % 100:
-        print(f"Processing job nr. {job.nr} - {job.name}:{job.ver}")
+    #if not job.nr % 100:
+    print(f"Processing job nr. {job.nr} - {job.name}:{job.ver}")
     with NamedTemporaryFile(suffix='.whl') as f:
         resp = requests.get(job.url)
         if resp.status_code == 404:
@@ -90,6 +92,15 @@ def mine_wheel_metadata_full_download(job: Job) -> Union[Result, Exception]:
     )
 
 
+def is_done(dump_dict, pkg_name, pkg_ver, pyver, filename):
+    try:
+        dump_dict[pkg_name][pyver][pkg_ver][filename]
+    except KeyError:
+        return False
+    else:
+        return True
+
+
 def get_jobs(bucket, pypi_dict:LazyBucketDict, dump_dict: LazyBucketDict):
     names = list(pypi_dict.by_bucket(bucket).keys())
     jobs = []
@@ -99,11 +110,7 @@ def get_jobs(bucket, pypi_dict:LazyBucketDict, dump_dict: LazyBucketDict):
                 continue
             for filename, data in release_types['wheels'].items():
                 pyver = data[1]
-                try:
-                    dump_dict[pkg_name][pyver][ver][filename]
-                except KeyError:
-                    pass
-                else:
+                if is_done(dump_dict, pkg_name, ver, pyver, filename):
                     continue
                 url = construct_url(pkg_name, pyver, filename)
                 jobs.append(dict(name=pkg_name, ver=ver, filename=filename, pyver=pyver,
@@ -112,10 +119,42 @@ def get_jobs(bucket, pypi_dict:LazyBucketDict, dump_dict: LazyBucketDict):
     return [Job(**j, nr=idx) for idx, j in enumerate(jobs)]
 
 
-def compress(dump_dict):
-    for name, pyvers in dump_dict.items():
-        all_fnames = {}
+def sort(d: dict):
+    res = {}
+    for k, v in sorted(d.items()):
+        if isinstance(v, dict):
+            res[k] = sort(v)
+        else:
+            res[k] = v
+    return res
+
+
+def decompress(d):
+    with open('/tmp/decomp', 'w') as f:
+        json.dump(d.data, f, indent=2)
+    for name, pyvers in d.items():
         for pyver, pkg_vers in pyvers.items():
+            for pkg_ver, fnames in pkg_vers.items():
+                for fn, data in fnames.items():
+                    if isinstance(data, str):
+                        key_ver, key_fn = data.split('@')
+                        try:
+                            pkg_vers[key_ver][key_fn]
+                        except KeyError:
+                            print(f"Error with key_ver: {key_ver} , key_fn: {key_fn}")
+                            exit()
+                        fnames[fn] = pkg_vers[key_ver][key_fn]
+
+
+def compress(dump_dict):
+    decompress(dump_dict)
+    # sort
+    for k, v in dump_dict.items():
+        dump_dict[k] = sort(v)
+    for name, pyvers in dump_dict.items():
+        for pyver, pkg_vers in pyvers.items():
+
+            all_fnames = {}
             for pkg_ver, fnames in pkg_vers.items():
                 for fn, data in fnames.items():
                     for existing_key, d in all_fnames.items():
@@ -126,6 +165,14 @@ def compress(dump_dict):
                         all_fnames[f"{pkg_ver}@{fn}"] = data
 
 
+def exec_or_return_exc(func, job):
+    try:
+        return func(job)
+    except Exception as e:
+        traceback.print_exc()
+        return e
+
+
 def main():
     dump_dir = sys.argv[1]
     workers = int(os.environ.get('WORKERS', "1"))
@@ -133,7 +180,7 @@ def main():
     for bucket in LazyBucketDict.bucket_keys():
         print(f"Begin wit bucket {bucket}")
         pypi_dict = LazyBucketDict(f"{pypi_fetcher_dir}/pypi")
-        dump_dict = LazyBucketDict(dump_dir)
+        dump_dict = LazyBucketDict(dump_dir, restrict_to_bucket=bucket)
         jobs = list(get_jobs(bucket, pypi_dict, dump_dict))
         if not jobs:
             continue
@@ -142,7 +189,7 @@ def main():
         if workers > 1:
             result = parallel(func, (jobs,), workers=workers)
         else:
-            result = [func(job) for job in jobs]
+            result = [exec_or_return_exc(func, job) for job in jobs]
         for r in result:
             if isinstance(r, Exception):
                 continue

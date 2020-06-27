@@ -7,7 +7,24 @@ let
   db_host = "10.147.19.69";
   extractor = import ../../src/extractor;
   branch = "master";
-  enable = false;
+  enable = true;
+  serviceConfig = {
+    Type = "simple";
+    User = "${user}";
+    RuntimeMaxSec = 60 * 60 * 10; # 10h
+  };
+  cd_into_updated_proj_branch = name: dir: branch: email: ''
+    if [ ! -e /home/${user}/${dir} ]; then
+      git clone git@github.com:DavHau/${name}.git /home/${user}/${dir}
+      cd /home/${user}/${dir}
+      git config user.email "${email}"
+      git config user.name "DavHau-bot"
+    fi
+    cd /home/${user}/${dir}
+    git fetch --all
+    git checkout ${branch}
+    git pull
+  '';
 in
 {
   deployment.keys = {
@@ -28,7 +45,7 @@ in
     };
   };
   swapDevices = [{
-    size = 4096;
+    size = 10000;
     device = "/tmp/swapfile";
   }];
   services.journald.extraConfig = ''
@@ -39,6 +56,7 @@ in
     python
     pkgs.htop
     pkgs.vim
+    pkgs.bmon
     extractor.py27
     extractor.py35
     extractor.py36
@@ -74,62 +92,73 @@ in
       deps = [];
     };
    };
-  systemd.services.crawl-urls = {
-    description = "Crawl PyPi URLs";
-    after = [ "network-online.target" ];
-    serviceConfig = { Type = "simple"; };
-    serviceConfig = { User = "${user}"; };
-    environment = {
-      WORKERS = "5";
-      PYTHONPATH = src;
-      EMAIL = "hsngrmpf+pypiurlcrawler@gmail.com";
-      inherit branch;
+  systemd.services.crawl-urls =
+    let
+      environment = {
+        WORKERS = "5";
+        PYTHONPATH = src;
+        EMAIL = "hsngrmpf+pypiurlcrawler@gmail.com";
+      };
+    in
+    {
+      inherit serviceConfig environment;
+      description = "Crawl PyPi URLs";
+      after = [ "network-online.target" ];
+      path = [ python pkgs.git ];
+      script = with environment; ''
+        set -x
+        ${cd_into_updated_proj_branch "nix-pypi-fetcher" "nix-pypi-fetcher_update" "${branch}" EMAIL}
+        rm -f ./pypi/*
+        ${python}/bin/python -u ${src}/crawl_urls.py ./pypi
+        echo $(date +%s) > UNIX_TIMESTAMP
+        git add ./pypi UNIX_TIMESTAMP
+        git pull
+        git commit -m "$(date)"
+        git push
+      '';
     };
-    path = [ python pkgs.git ];
-    script = ''
-      set -x
-      if [ ! -e /home/${user}/nix-pypi-fetcher ]; then
-        git clone --branch ${branch} git@github.com:DavHau/nix-pypi-fetcher.git /home/${user}/nix-pypi-fetcher
-        cd /home/${user}/nix-pypi-fetcher
-        git config user.email "$EMAIL"
-        git config user.name "DavHau"
-      fi
-      cd /home/${user}/nix-pypi-fetcher
-      git checkout $branch
-      git pull
-      rm -f ./pypi/*
-      ${python}/bin/python -u ${src}/crawl_urls.py ./pypi
-      echo $(date +%s) > UNIX_TIMESTAMP
-      git add ./pypi UNIX_TIMESTAMP
-      git pull
-      git commit -m "$(date)"
-      git push
-    '';
-  };
   systemd.timers.crawl-urls = {
-    # inherit enable;
+    inherit enable;
     wantedBy = [ "timers.target" ];
     partOf = [ "crawl-urls.service" ];
     timerConfig.OnCalendar = "00/12:00";  # at 00:00 and 12:00
   };
-  systemd.services.crawl-sdist = {
-    description = "Crawl PyPi Sdist Deps";
+  systemd.services.crawl-sdist =
+    let
+      environment = {
+        WORKERS = "5";
+        PYTHONPATH = src;
+        NIXPKGS_SRC = nixpkgs_src;
+        DB_HOST = db_host;
+        EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
+        CLEANUP = "y";
+        pypi_fetcher = "/home/${user}/nix-pypi-fetcher";
+      };
+    in
+    {
+    inherit serviceConfig environment;
+    description = "Crawl PyPi Sdist Deps and push to gitub";
     after = [ "network-online.target" ];
-    serviceConfig = { Type = "simple"; };
-    serviceConfig = { User = "${user}"; };
-    environment = {
-      inherit branch;
-      WORKERS = "1";
-      PYTHONPATH = src;
-      NIXPKGS_SRC = nixpkgs_src;
-      DB_HOST = db_host;
-      EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
-      CLEANUP = "y";
-    };
     path = [ python pkgs.git pkgs.nix pkgs.gnutar];
-    script = ''
+    script = with environment; ''
       export DB_PASS=$(cat /home/${user}/db_pass)
       ${python}/bin/python -u ${src}/crawl_sdist_deps.py
+      set -x
+      export GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh -i /home/${user}/.ssh/id_ed25519_deps_db"
+      ${cd_into_updated_proj_branch "nix-pypi-fetcher" "nix-pypi-fetcher" "${branch}" EMAIL}
+      ${cd_into_updated_proj_branch "pypi-deps-db" "pypi-deps-db" "${branch}" EMAIL}
+      rm -f ./sdist/*
+      ${python}/bin/python -u ${src}/dump_sdist_deps.py ./sdist
+      echo $(date +%s) > UNIX_TIMESTAMP
+      pypi_fetcher_commit=$(git ls-remote https://github.com/DavHau/nix-pypi-fetcher ${branch} | awk '{print $1;}')
+      pypi_fetcher_url="https://github.com/DavHau/nix-pypi-fetcher/archive/''${pypi_fetcher_commit}.tar.gz"
+      pypi_fetcher_hash=$(nix-prefetch-url --unpack $pypi_fetcher_url)
+      echo $pypi_fetcher_commit > PYPI_FETCHER_COMMIT
+      echo $pypi_fetcher_hash > PYPI_FETCHER_SHA256
+      git add ./sdist UNIX_TIMESTAMP PYPI_FETCHER_COMMIT PYPI_FETCHER_SHA256
+      git pull
+      git commit -m "$(date) - sdist_update"
+      git push
     '';
   };
   systemd.timers.crawl-sdist = {
@@ -141,46 +170,42 @@ in
       "Mon-Sun *-*-* 16:00:00"
     ];
   };
-  systemd.services.dump-sdist = {
-    description = "Dump Pypi Deps To Git";
+  systemd.services.crawl-wheel =
+    let
+      environment = {
+        WORKERS = "1";
+        PYTHONPATH = src;
+        EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
+        pypi_fetcher = "/tmp/pypi-fetcher";
+        dump_dir = "/home/${user}/pypi-deps-db/wheel";
+        SCRAPY_SETTINGS_MODULE = "scrapy_settings";
+      };
+    in
+    {
+    inherit serviceConfig environment;
+    description = "Crawl Pypi Wheel Deps and push to gitub";
     after = [ "network-online.target" ];
-    serviceConfig = { Type = "simple"; };
-    serviceConfig = { User = "${user}"; };
-    environment = {
-      PYTHONPATH = src;
-      DB_HOST = db_host;
-      EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
-      inherit branch;
-    };
     path = [ python ] ++ (with pkgs; [ git nix gawk gnutar gzip ]);
-    script = ''
-      export DB_PASS=$(cat /home/${user}/db_pass)
+    script = with environment; ''
       set -x
       export GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh -i /home/${user}/.ssh/id_ed25519_deps_db"
-      if [ ! -e /home/${user}/pypi-deps-db ]; then
-        git clone --branch ${branch} git@github.com:DavHau/pypi-deps-db.git /home/${user}/pypi-deps-db
-        cd /home/${user}/pypi-deps-db
-        git config user.email "$EMAIL"
-        git config user.name "DavHau"
-      fi
-      cd /home/${user}/pypi-deps-db
-      git checkout $branch
-      git pull
-      rm -f ./sdist/*
-      ${python}/bin/python -u ${src}/dump_sdist_deps.py ./sdist
+      ${cd_into_updated_proj_branch "nix-pypi-fetcher" "nix-pypi-fetcher" "${branch}" EMAIL}
+      ${cd_into_updated_proj_branch "pypi-deps-db" "pypi-deps-db" "${branch}" EMAIL}
+      export PYTONPATH=${src}
+      ${python}/bin/python -u ${src}/crawl_wheel_deps.py $dump_dir
       echo $(date +%s) > UNIX_TIMESTAMP
-      pypi_fetcher_commit=$(git ls-remote https://github.com/DavHau/nix-pypi-fetcher $branch | awk '{print $1;}')
+      pypi_fetcher_commit=$(git ls-remote https://github.com/DavHau/nix-pypi-fetcher ${branch} | awk '{print $1;}')
       pypi_fetcher_url="https://github.com/DavHau/nix-pypi-fetcher/archive/''${pypi_fetcher_commit}.tar.gz"
       pypi_fetcher_hash=$(nix-prefetch-url --unpack $pypi_fetcher_url)
       echo $pypi_fetcher_commit > PYPI_FETCHER_COMMIT
       echo $pypi_fetcher_hash > PYPI_FETCHER_SHA256
-      git add ./sdist UNIX_TIMESTAMP PYPI_FETCHER_COMMIT PYPI_FETCHER_SHA256
+      git add ./wheel UNIX_TIMESTAMP PYPI_FETCHER_COMMIT PYPI_FETCHER_SHA256
       git pull
-      git commit -m "$(date)"
+      git commit -m "$(date) - wheel_update"
       git push
     '';
   };
-  systemd.timers.dump-sdist = {
+  systemd.timers.crawl-wheel = {
     inherit enable;
     wantedBy = [ "timers.target" ];
     partOf = [ "dump-deps.service" ];
