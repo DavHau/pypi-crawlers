@@ -139,7 +139,7 @@ in
     inherit serviceConfig environment;
     description = "Crawl PyPi Sdist Deps and push to gitub";
     after = [ "network-online.target" ];
-    path = [ python pkgs.git pkgs.nix pkgs.gnutar];
+    path = [ python ] ++ (with pkgs; [ git nix gawk gnutar gzip ]);
     script = with environment; ''
       export DB_PASS=$(cat /home/${user}/db_pass)
       ${python}/bin/python -u ${src}/crawl_sdist_deps.py

@@ -6,6 +6,7 @@ let
 in
 mach-nix.mkPython {
   requirements = ''
+    packaging
     requests
     psycopg2 >= 2.8.0
     pkginfo
