@@ -1,9 +1,8 @@
 rec {
   stable = builtins.fetchGit {
-    name = "nixos-19.09";
+    name = "nixpkgs";
     url = "https://github.com/nixos/nixpkgs-channels/";
-    # `git ls-remote https://github.com/nixos/nixpkgs-channels nixos-19.09`
-    ref = "refs/heads/nixos-19.09";
-    rev = "60c4ddb97fd5a730b93d759754c495e1fe8a3544";
+    ref = "refs/heads/nixos-20.03";
+    rev = "0a40a3999eb4d577418515da842a2622a64880c5";
   };
 }

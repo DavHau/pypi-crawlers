@@ -3,7 +3,7 @@ let
   python = (import ../python.nix);
   user = "crawler";
   src = "${../../src}";
-  nixpkgs_src = "${../nixpkgs-src.nix}";
+  nixpkgs_src = (import ../../nix/nixpkgs-src.nix).stable;
   db_host = "10.147.19.69";
   extractor = import ../../src/extractor;
   branch = "master";
@@ -48,8 +48,9 @@ in
     size = 10000;
     device = "/tmp/swapfile";
   }];
+  nix.nixPath = [ "nixpkgs=${nixpkgs_src}" ];
   services.journald.extraConfig = ''
-    SystemMaxUse=250M
+    SystemMaxUse=1G
   '';
   nixpkgs.config.allowUnfree = true;
   environment.systemPackages = [
@@ -128,7 +129,7 @@ in
       environment = {
         WORKERS = "5";
         PYTHONPATH = src;
-        NIXPKGS_SRC = nixpkgs_src;
+        NIX_PATH = "nixpkgs=${nixpkgs_src}";
         DB_HOST = db_host;
         EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
         CLEANUP = "y";
@@ -137,7 +138,7 @@ in
     in
     {
     inherit serviceConfig environment;
-    description = "Crawl PyPi Sdist Deps and push to gitub";
+    description = "Crawl PyPi Sdist Deps and push to github";
     after = [ "network-online.target" ];
     path = [ python ] ++ (with pkgs; [ git nix gawk gnutar gzip ]);
     script = with environment; ''
@@ -173,12 +174,11 @@ in
   systemd.services.crawl-wheel =
     let
       environment = {
-        WORKERS = "1";
+        WORKERS = "5";
         PYTHONPATH = src;
         EMAIL = "hsngrmpf+pypidepscrawler@gmail.com";
-        pypi_fetcher = "/tmp/pypi-fetcher";
+        pypi_fetcher = "/home/${user}/nix-pypi-fetcher";
         dump_dir = "/home/${user}/pypi-deps-db/wheel";
-        SCRAPY_SETTINGS_MODULE = "scrapy_settings";
       };
     in
     {

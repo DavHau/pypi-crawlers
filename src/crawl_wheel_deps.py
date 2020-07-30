@@ -4,8 +4,10 @@ import sys
 import traceback
 import zipfile
 from dataclasses import dataclass
+from os.path import isdir
 from random import shuffle
 from tempfile import NamedTemporaryFile
+from time import sleep
 from typing import Union
 
 import pkginfo
@@ -13,6 +15,12 @@ import requests
 
 from bucket_dict import LazyBucketDict
 from utils import parallel
+
+
+email = os.environ.get("EMAIL")
+if not email:
+    raise Exception("Please provide EMAIL=")
+headers = {'User-Agent': f'Pypi Daily Sync (Contact: {email})'}
 
 
 @dataclass
@@ -23,6 +31,7 @@ class Job:
     pyver: str
     url: str
     nr: int
+    bucket: str
 
 
 @dataclass()
@@ -31,6 +40,11 @@ class Result:
     requires_dist: str
     provides_extras: str
     requires_external: str
+    requires_python: str
+
+
+class Retry(Exception):
+    pass
 
 
 def construct_url(name, pyver, filename: str):
@@ -38,58 +52,36 @@ def construct_url(name, pyver, filename: str):
     return f"{base_url}{pyver}/{name[0]}/{name}/{filename}"
 
 
-def resolve_redirect(url) -> str:
-    r = requests.get(url, allow_redirects=False)
-    r.raise_for_status()
-    return r.headers['Location']
-
-
-class HttpWheel(pkginfo.Wheel):
-    def __init__(self, f_obj):
-        self.f_obj = f_obj
-        self.extractMetadata()
-
-    def read(self):
-        archive = zipfile.ZipFile(self.f_obj)
-        names = archive.namelist()
-
-        def read_file(name):
-            return archive.read(name)
-
-        close = archive.close
-
-        try:
-            tuples = [x.split('/') for x in names if 'METADATA' in x]
-            schwarz = sorted([(len(x), x) for x in tuples])
-            for path in [x[1] for x in schwarz]:
-                candidate = '/'.join(path)
-                data = read_file(candidate)
-                if b'Metadata-Version' in data:
-                    return data
-        finally:
-            close()
-
-
 def mine_wheel_metadata_full_download(job: Job) -> Union[Result, Exception]:
-    #if not job.nr % 100:
-    print(f"Processing job nr. {job.nr} - {job.name}:{job.ver}")
-    with NamedTemporaryFile(suffix='.whl') as f:
-        resp = requests.get(job.url)
-        if resp.status_code == 404:
-            return requests.HTTPError()
-        resp.raise_for_status()
-        with open(f.name, 'wb') as f_write:
-            f_write.write(resp.content)
+    print(f"Bucket {job.bucket} - Job {job.nr} - {job.name}:{job.ver}")
+    for _ in range(5):
         try:
-            metadata = pkginfo.get_metadata(f.name)
-        except zipfile.BadZipFile as e:
-            return e
-    return Result(
-        job=job,
-        requires_dist=metadata.requires_dist,
-        provides_extras=metadata.provides_extras,
-        requires_external=metadata.requires_external,
-    )
+            with NamedTemporaryFile(suffix='.whl') as f:
+                resp = requests.get(job.url, headers=headers)
+                if resp.status_code == 404:
+                    return requests.HTTPError()
+                if resp.status_code in [503, 502]:
+                    try:
+                        resp.raise_for_status()
+                    except:
+                        traceback.print_exc()
+                    raise Retry
+                resp.raise_for_status()
+                with open(f.name, 'wb') as f_write:
+                    f_write.write(resp.content)
+                try:
+                    metadata = pkginfo.get_metadata(f.name)
+                except zipfile.BadZipFile as e:
+                    return e
+            return Result(
+                job=job,
+                requires_dist=metadata.requires_dist,
+                provides_extras=metadata.provides_extras,
+                requires_external=metadata.requires_external,
+                requires_python=metadata.requires_python,
+            )
+        except Retry:
+            sleep(10)
 
 
 def is_done(dump_dict, pkg_name, pkg_ver, pyver, filename):
@@ -113,8 +105,9 @@ def get_jobs(bucket, pypi_dict:LazyBucketDict, dump_dict: LazyBucketDict):
                 if is_done(dump_dict, pkg_name, ver, pyver, filename):
                     continue
                 url = construct_url(pkg_name, pyver, filename)
-                jobs.append(dict(name=pkg_name, ver=ver, filename=filename, pyver=pyver,
-                          url=url))
+                jobs.append(dict(
+                    name=pkg_name, ver=ver, filename=filename, pyver=pyver,
+                    url=url, bucket=bucket))
     shuffle(jobs)
     return [Job(**j, nr=idx) for idx, j in enumerate(jobs)]
 
@@ -130,8 +123,6 @@ def sort(d: dict):
 
 
 def decompress(d):
-    with open('/tmp/decomp', 'w') as f:
-        json.dump(d.data, f, indent=2)
     for name, pyvers in d.items():
         for pyver, pkg_vers in pyvers.items():
             for pkg_ver, fnames in pkg_vers.items():
@@ -176,7 +167,9 @@ def exec_or_return_exc(func, job):
 def main():
     dump_dir = sys.argv[1]
     workers = int(os.environ.get('WORKERS', "1"))
-    pypi_fetcher_dir = os.environ.get('pypi_fetcher', '/tmp/pypi_fetcher')
+    pypi_fetcher_dir = os.environ.get('pypi_fetcher')
+    print(f'Index directory: {pypi_fetcher_dir}')
+    assert isdir(pypi_fetcher_dir)
     for bucket in LazyBucketDict.bucket_keys():
         print(f"Begin wit bucket {bucket}")
         pypi_dict = LazyBucketDict(f"{pypi_fetcher_dir}/pypi")
@@ -204,7 +197,7 @@ def main():
             if ver not in dump_dict[name][pyver]:
                 dump_dict[name][pyver][ver] = {}
             dump_dict[name][pyver][ver][fn] = {}
-            for key in ('requires_dist', 'provides_extras', 'requires_external'):
+            for key in ('requires_dist', 'provides_extras', 'requires_external', 'requires_python'):
                 val = getattr(r, key)
                 if val:
                     dump_dict[name][pyver][ver][fn][key] = val
