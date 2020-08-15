@@ -69,10 +69,7 @@ def mine_wheel_metadata_full_download(job: Job) -> Union[Result, Exception]:
                 resp.raise_for_status()
                 with open(f.name, 'wb') as f_write:
                     f_write.write(resp.content)
-                try:
-                    metadata = pkginfo.get_metadata(f.name)
-                except zipfile.BadZipFile as e:
-                    return e
+                metadata = pkginfo.get_metadata(f.name)
             return Result(
                 job=job,
                 requires_dist=metadata.requires_dist,
@@ -82,6 +79,12 @@ def mine_wheel_metadata_full_download(job: Job) -> Union[Result, Exception]:
             )
         except Retry:
             sleep(10)
+        except zipfile.BadZipFile as e:
+            return e
+        except Exception:
+            print(f"Problem with {job.name}:{job.ver}")
+            traceback.print_exc()
+            raise
 
 
 def is_done(dump_dict, pkg_name, pkg_ver, pyver, filename):
@@ -180,7 +183,9 @@ def main():
         print(f"Starting batch with {len(jobs)} jobs")
         func = mine_wheel_metadata_full_download
         if workers > 1:
-            result = parallel(func, (jobs,), workers=workers)
+            def f(job):
+                return exec_or_return_exc(func, job)
+            result = parallel(f, (jobs,), workers=workers)
         else:
             result = [exec_or_return_exc(func, job) for job in jobs]
         for r in result:
